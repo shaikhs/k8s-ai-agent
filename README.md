@@ -31,7 +31,3 @@ Your questions **and the kubectl output** (pod names, logs, events, YAML) are
 sent to Google Gemini. Don't request Secret contents or logs containing
 credentials or customer data. AI answers can be wrong - check the raw
 `Observation:` output.
-
-## Credits
-Based on the tutorial by Syed Jibbran Ali -
-https://github.com/JibbranAli/Agent_FOR_K8s
