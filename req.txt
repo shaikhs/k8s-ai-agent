@@ -1,0 +1,19 @@
+# Kubernetes AI Agent (myagent.py) - Python dependencies
+# Install: .\.venv\Scripts\python -m pip install -r req.txt
+
+# LangChain agent framework (initialize_agent / ReAct lives in langchain-classic)
+langchain>=1.4.10
+langchain-core>=1.7.7
+langchain-community>=0.4.2
+langchain-classic>=1.0.8
+
+# Google Gemini LLM
+langchain-google-genai>=4.4.3
+google-generativeai>=0.7.2
+
+# Data models / YAML
+pydantic>=2.14.3
+pyyaml>=6.0.2
+
+# AWS: Gemini key from Secrets Manager + EKS cluster listing/switching
+boto3>=1.35.0

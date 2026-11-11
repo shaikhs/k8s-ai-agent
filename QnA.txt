@@ -1,0 +1,224 @@
+Kubernetes AI Agent (myagent.py) - Frequently Asked Questions (QA)
+=================================================================
+See setup.txt for full installation and access steps.
+
+
+GENERAL
+-------
+Q: What is this agent?
+A: A command-line assistant. You type plain English ("show pods in apps"),
+   Google Gemini (via LangChain) decides which kubectl command to run, the
+   agent runs it on the EKS dev cluster and summarises the result.
+
+Q: Which cluster / namespace does it use?
+A: The current context of your kubeconfig. If $env:KUBECONFIG is not set,
+   the agent uses C:\Projects\.kube\dev\config automatically (default
+   cluster demo-dev). The current cluster is printed at startup.
+   If you don't mention a namespace, it uses "apps".
+
+Q: I can't remember the cluster names. How do I see them?
+A: Type "list all clusters" (or "clusters", "show clusters", "list eks
+   clusters"). You get a numbered list of every EKS cluster your AWS
+   profile can see; "<- current" marks the active one.
+
+Q: How do I switch to a different cluster?
+A: Any time during the session, at the agent prompt:
+     list all clusters   -> numbered list, type a number (Enter cancels)
+     switch to <name>    -> switch directly, e.g. "switch to demo-qa"
+                            (also: change cluster to <name>,
+                             use cluster <name>, connect to <name>)
+     current cluster     -> show where you are connected
+                            (also: which cluster, which cluster am i on)
+   All following questions go to the new cluster - no restart needed.
+   Clusters with "prod" in the name ask for extra confirmation.
+   These commands run directly (no AI) and do not use Gemini quota.
+
+Q: I typed "list all clusters" and it showed NODES instead.
+A: You are running an old copy of the agent (before cluster commands were
+   added). Type exit and start it again.
+   Note: questions like "list pods in the cluster" or "show nodes" are
+   meant for the AI and run on the CURRENT cluster.
+
+Q: Where is the cluster info stored?
+A: In your kubeconfig (default C:\Projects\.kube\dev\config). If a cluster
+   is missing there, the agent adds it automatically when you switch.
+   "sync clusters" adds ALL missing EKS clusters at once (a backup is
+   saved as config.bak first; existing entries are not modified).
+   Switching changes the kubeconfig "current context", so other terminals
+   using the same file will also point to the new cluster.
+
+Q: The cluster list is empty / missing clusters.
+A: The list uses AWS profile "my-aws-profile" and region us-east-1. Change with:
+     $env:AWS_EKS_PROFILE = "<profile>"
+     $env:AWS_EKS_REGIONS = "us-east-1,us-west-2"
+   Your role also needs eks:ListClusters and eks:DescribeCluster.
+
+Q: I switched cluster but get "Unauthorized" / "Forbidden".
+A: Listing a cluster does not mean you have access inside it. Your AWS
+   role must be mapped to Kubernetes RBAC in that cluster. Ask DevOps.
+
+Q: After switching, the default namespace "apps" doesn't exist.
+A: Mention the namespace in your question, e.g. "get pods in default".
+
+Q: How do I query another namespace or all namespaces?
+A: Say it in the question: "get pods in obs namespace",
+   "list pods in all namespaces".
+
+Q: What can it do?
+A: get, describe, logs, create, scale, delete, monitor (top pods/nodes,
+   events), expose (ClusterIP / NodePort / LoadBalancer services).
+   Plus cluster commands: list / switch / current / sync clusters.
+   Type "help" inside the agent for example queries.
+
+Q: Does it remember my previous question?
+A: No. Every question is independent. Include full details each time
+   (pod name, namespace, etc.). The selected cluster DOES stay the same
+   until you switch again.
+
+Q: Can I use it on staging / production?
+A: It is intended for dev / QA clusters. Clusters with "prod" in the
+   name ask for an extra confirmation before switching. Don't use it on
+   production unless explicitly approved.
+
+Q: I updated myagent.py - do I need to restart?
+A: Yes. Type exit and run it again; a running agent keeps the old code.
+
+Q: Can I run it on Mac / Linux?
+A: Yes, with small changes: use ".venv/bin/python" instead of
+   ".\.venv\Scripts\python" and "export VAR=value" instead of "$env:VAR = ...".
+
+
+SAFETY
+------
+Q: Can the agent change or break things in the cluster?
+A: Only through create / scale / delete / expose. Each of these prints the
+   exact kubectl command and asks "Proceed? (y/N)". Nothing happens unless
+   you type y. Pressing Enter = No. Read the command before approving.
+
+Q: Can it do more than my own permissions allow?
+A: No. kubectl runs with YOUR AWS / Kubernetes permissions. If you have
+   read-only access, all write actions will fail with "Forbidden".
+
+Q: Is cluster data sent outside the company?
+A: Yes. Your question AND the kubectl output (pod names, logs, events,
+   YAML, etc.) are sent to Google Gemini to generate the answer.
+   On the Gemini free tier, Google may use this data to improve its
+   products. Therefore:
+     - Do NOT ask it to show Secrets content (e.g. "get secret X -o yaml")
+     - Do NOT fetch logs that may contain passwords, tokens, or customer data
+     - Treat every answer as "sent to a third party"
+
+Q: Can I trust the agent's answer?
+A: Treat it as a helper, not as the truth. The AI can misread output or
+   summarise incorrectly. The raw kubectl output is printed above the
+   answer ("Observation:") - check it, or run the kubectl command yourself
+   for anything important.
+
+Q: Why were "-w / --watch" or "-f / --follow" removed from my command?
+A: Live streaming never ends, so the agent would hang. They are stripped
+   automatically. Use "last N lines" or "since 10m" instead.
+
+
+GEMINI API KEY
+--------------
+Q: Do I need my own Gemini API key?
+A: Yes. Each person uses their own key (free from
+   https://aistudio.google.com/app/apikey). Sharing a key means sharing
+   the daily quota and exposing it.
+
+Q: Where is my key stored?
+A: In AWS Secrets Manager, in a secret named after your AWS login:
+     agent-for-k8s/<your-aws-user-name>/google-api-key
+   It is NOT stored in the repo or any file on your machine.
+
+Q: How do I add my key the first time?
+A: Just run the agent. If your secret doesn't exist, it asks for the key
+   at a hidden prompt and creates the secret. See setup.txt section 1d.
+
+Q: Nothing appears when I paste the key - is it broken?
+A: No, the prompt is hidden on purpose. Paste (Ctrl+V or right-click) and
+   press Enter. Do NOT press Ctrl+C - that cancels.
+
+Q: How do I change / replace my key?
+A: Use the one-line command in setup.txt section 1d
+   "CHANGE / REPLACE YOUR KEY LATER".
+
+Q: I accidentally pasted my key in a chat / ticket / command line. What now?
+A: 1) Delete that key in Google AI Studio and create a new one.
+   2) Update your secret with the "CHANGE / REPLACE" command.
+   3) If typed on the command line, remove it from PowerShell history:
+        notepad (Get-PSReadLineOption).HistorySavePath
+
+Q: Can other people see my key?
+A: Anyone with read access to agent-for-k8s/* in Secrets Manager can. The
+   name only separates keys; it does not protect them. Ask the AWS admin
+   to restrict access per user.
+
+Q: Can I skip AWS Secrets Manager?
+A: Yes. Set GOOGLE_API_KEY in the window instead (setup.txt section 1d,
+   "ALTERNATIVE"). If GOOGLE_API_KEY is set, it is always used first.
+
+
+QUOTA & PERFORMANCE
+-------------------
+Q: Does it cost money?
+A: Not on the Gemini free tier. Free tier has daily request limits per model.
+
+Q: I get "429 You exceeded your current quota".
+A: You used up today's free requests. Each question uses several requests
+   (one per thinking step). Wait for the daily reset (shown in the error)
+   or use a different model in myagent.py.
+
+Q: Why is it slow / why does one question make several calls?
+A: The agent works in steps: think -> run a kubectl command -> read the
+   output -> think again -> answer. Big outputs (e.g. all pods in all
+   namespaces) take longer.
+
+Q: Which model does it use? Can I change it?
+A: gemini-3.5-flash-lite (set in myagent.py, model="..."). Google retires
+   models over time; if you get "404 model not found", change it to a
+   current model listed in Google AI Studio.
+
+
+COMMON MESSAGES
+---------------
+Q: "Invalid Format: Missing 'Action:' after 'Thought:'" - is it an error?
+A: No. The AI formatted a step wrongly; the agent retries automatically.
+   If it repeats, rephrase your question more specifically.
+
+Q: LangChainDeprecationWarning / "temperature will be ignored" warnings?
+A: Harmless. Ignore them.
+
+Q: "You must be logged in to the server (Unauthorized)"
+A: AWS session expired, or $env:KUBECONFIG points to a wrong file, or you
+   have no access to the CURRENT cluster. Log in again, check
+   "current cluster", or "switch to demo-dev".
+
+Q: "ModuleNotFoundError: No module named ..."
+A: Run: .\.venv\Scripts\python -m pip install -r req.txt
+
+Q: My kubeconfig looks broken after "sync clusters".
+A: Restore the backup made before syncing:
+     Copy-Item C:\Projects\.kube\dev\config.bak C:\Projects\.kube\dev\config
+
+Q: "Forbidden ... cannot list resource"
+A: You don't have Kubernetes permission for that resource / namespace.
+   Request access from DevOps.
+
+Q: "401 UNAUTHENTICATED ... API key not valid"
+A: The stored Gemini key is wrong. Replace it (setup.txt section 1d).
+   Also check that an old GOOGLE_API_KEY is not set in the window:
+     Remove-Item Env:GOOGLE_API_KEY -ErrorAction SilentlyContinue
+
+Q: "error: Metrics API not available" on CPU/memory questions
+A: metrics-server is not reachable in the cluster; "top" will not work.
+
+Q: How do I exit?
+A: Type exit or quit (or press Ctrl+C).
+
+
+SUPPORT
+-------
+Q: Who do I contact?
+A: Cluster / AWS / RBAC access   -> DevOps / Platform team
+   Agent code / setup issues     -> owner of the Agent_FOR_K8s repo

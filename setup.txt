@@ -1,0 +1,402 @@
+Kubernetes AI Agent (myagent.py) - Setup & Access Guide for QA
+==============================================================
+
+Project location:
+  C:\Projects\github\OTHER\GEN_AI\Agent_FOR_K8s
+
+What it does:
+  A natural-language CLI agent (LangChain + Google Gemini) that runs kubectl
+  commands against EKS clusters. Tools: get, describe, logs, create,
+  scale, delete, monitor (top/events), expose (services/load balancers).
+  Built-in cluster switching (list / switch / sync EKS clusters).
+  Default cluster: demo-dev   Default namespace: apps
+  Model: gemini-3.5-flash-lite
+
+Files in this folder:
+  myagent.py  - the agent
+  req.txt     - Python dependencies (pip install -r req.txt)
+  setup.txt   - this guide (access, install, run, troubleshooting)
+  QnA.txt     - frequently asked questions
+
+
+1. ACCESS REQUIRED
+------------------
+a) AWS access (SAML / SSO login)
+   - Access to the AWS account hosting EKS cluster: demo-dev (region us-east-1)
+   - An IAM role that is mapped to Kubernetes RBAC in the cluster
+     (aws-auth ConfigMap / EKS access entry) - request from DevOps/Platform team
+   - AWS session must be active (SAML credentials expire; re-login when they do)
+
+b) Kubernetes RBAC permissions (request from DevOps/Platform team)
+   Recommended for QA - READ-ONLY:
+     - get, list, watch on pods, deployments, services, replicasets,
+       statefulsets, daemonsets, configmaps, events, ingresses, namespaces, nodes
+     - get on pods/log            (for "logs" queries)
+     - get, list on metrics.k8s.io pods/nodes  (for "top pods/nodes")
+   Only if QA must perform write actions (create/scale/delete/expose):
+     - create, update, patch, delete on the required resources in namespace apps
+   NOTE: kubectl uses YOUR permissions. The agent cannot do anything you
+   are not allowed to do in the cluster.
+
+c) Kubeconfig file for demo-dev
+   - Default path used by the team: C:\Projects\.kube\dev\config
+   - Or generate one:
+       aws eks update-kubeconfig --name demo-dev --region us-east-1 --profile my-aws-profile --kubeconfig C:\Projects\.kube\dev\config
+   - Or let the agent do it: type "sync clusters" inside the agent to add
+     ALL EKS clusters your profile can see (backup saved as config.bak).
+   - The agent uses this path automatically if $env:KUBECONFIG is not set.
+
+d) Google Gemini API key
+   - Create at https://aistudio.google.com/app/apikey (each QA member uses their own key)
+   - Free tier has daily request limits per model (agent uses gemini-3.5-flash-lite)
+   - NEVER commit the key to git or share it in chat/tickets
+
+   HOW THE AGENT FINDS YOUR KEY
+     1st: environment variable GOOGLE_API_KEY (if set in the window)
+     2nd: AWS Secrets Manager secret (RECOMMENDED - per user, nothing on disk)
+            agent-for-k8s/<your-aws-session-name>/google-api-key
+   Do NOT paste the key inside myagent.py, any repo file, chat, or tickets.
+   Do NOT type the key on the command line (PowerShell saves it in history).
+
+   ------------------------------------------------------------------
+   STEP-BY-STEP: ADD YOUR OWN GEMINI API KEY (each QA member, one-time)
+   ------------------------------------------------------------------
+   Step 1 - Create your Gemini API key
+       Open https://aistudio.google.com/app/apikey
+       Sign in with your own Google account > "Create API key" > copy it.
+       Copy the FULL key exactly (no spaces, no quotes, nothing extra).
+
+   Step 2 - Log in to AWS with the my-aws-profile profile (your usual SAML/SSO login)
+       Verify:
+         aws sts get-caller-identity --profile my-aws-profile --query Arn --output text
+       Example output:
+         arn:aws:sts::123456789012:assumed-role/QA-Role/john.doe
+       The last part (john.doe) is your user name -> your secret will be:
+         agent-for-k8s/john.doe/google-api-key
+       (Your AWS profile has a different name? Set it first:
+         $env:AWS_SECRET_PROFILE = "<your-profile-name>" )
+
+   Step 3 - Make sure no old key is set in the window
+         Remove-Item Env:GOOGLE_API_KEY -ErrorAction SilentlyContinue
+
+   Step 4 - Run the agent
+         cd C:\Projects\github\OTHER\GEN_AI\Agent_FOR_K8s
+         $env:KUBECONFIG = "C:\Projects\.kube\dev\config"
+         .\.venv\Scripts\python myagent.py
+       First run only, you will see:
+         Loading Gemini API key from AWS Secrets Manager: agent-for-k8s/john.doe/google-api-key
+         Secret '...' not found. One-time setup: it will be created now.
+         Paste your Gemini API key and press Enter (input is hidden):
+
+   Step 5 - Paste the key and press Enter
+       - Paste with Ctrl+V or right-click (NOT Ctrl+C - that cancels)
+       - Nothing is shown while pasting - this is normal
+       - Press Enter. You should see:
+           Saved to AWS Secrets Manager: agent-for-k8s/john.doe/google-api-key
+
+   Step 6 - Test
+       At the agent prompt type:  get deployments
+       If you get a list of deployments, you are done. From now on just run
+       the agent - the key is loaded automatically, no prompt.
+
+   ------------------------------------------------------------------
+   CHANGE / REPLACE YOUR KEY LATER (wrong key, expired, rotated)
+   ------------------------------------------------------------------
+   Run this (key is asked at a hidden prompt, secret name is auto-detected):
+     .\.venv\Scripts\python -c "import boto3,getpass,os; s=boto3.Session(profile_name=os.environ.get('AWS_SECRET_PROFILE','my-aws-profile'),region_name='us-east-1'); n='agent-for-k8s/'+s.client('sts').get_caller_identity()['Arn'].rsplit('/',1)[-1].lower()+'/google-api-key'; s.client('secretsmanager').put_secret_value(SecretId=n, SecretString=getpass.getpass('New Gemini key (hidden): ').strip()); print('Updated', n)"
+   Paste the new key, press Enter, then run the agent again.
+
+   ------------------------------------------------------------------
+   ALTERNATIVE (no AWS Secrets Manager) - environment variable
+   ------------------------------------------------------------------
+   Current window only:
+       $env:GOOGLE_API_KEY = Read-Host "Paste Gemini API key"
+     (type the line exactly as shown, then paste the key at the prompt)
+   Permanent for your Windows user:
+       Start > "Edit environment variables for your account" > User variables
+       > New > Name: GOOGLE_API_KEY | Value: <your key> > OK
+       Then close and reopen PowerShell / VS Code.
+   Remove the permanent one later:
+       [Environment]::SetEnvironmentVariable("GOOGLE_API_KEY", $null, "User")
+
+   ------------------------------------------------------------------
+   NOTES
+   ------------------------------------------------------------------
+   Optional overrides (env vars):
+       AWS_SECRET_PROFILE     = my-aws-profile          (AWS CLI profile)
+       AWS_SECRET_REGION      = us-east-1
+       GOOGLE_API_KEY_SECRET  = <full secret name>  (skip auto-naming)
+   IAM permissions needed on agent-for-k8s/*:
+       secretsmanager:CreateSecret, GetSecretValue, PutSecretValue
+       (plus kms:Decrypt if a customer-managed KMS key is used)
+   Naming is NOT access control: anyone allowed to read agent-for-k8s/* can
+   read other users' keys. Ask the AWS admin to restrict each user to their
+   own secret (e.g. "owner" tag + IAM condition).
+
+e) Internet access
+   - pypi.org (install packages)
+   - generativelanguage.googleapis.com (Gemini API)
+   - EKS API endpoint (may require VPN)
+
+
+2. SOFTWARE REQUIRED
+--------------------
+  - Python 3.10+ (tested with 3.12)
+  - kubectl (version within +/-1 minor of the cluster version)
+  - AWS CLI v2 (for update-kubeconfig / token generation)
+  - Git (to clone the repo)
+
+
+3. INSTALLATION (Windows PowerShell)
+------------------------------------
+  cd C:\Projects\github\OTHER\GEN_AI\Agent_FOR_K8s
+  python -m venv .venv
+  .\.venv\Scripts\python -m pip install --upgrade pip
+  .\.venv\Scripts\python -m pip install -r req.txt
+
+
+4. RUN (every new PowerShell window)
+------------------------------------
+  # 1. Log in to AWS via SAML (team's usual method) so the my-aws-profile session is active
+  aws sts get-caller-identity --profile my-aws-profile
+  # 2. Kubeconfig: optional. If $env:KUBECONFIG is not set, the agent uses
+  #    C:\Projects\.kube\dev\config automatically. To use another file:
+  #      $env:KUBECONFIG = "<path-to-kubeconfig>"
+  # 3. Gemini key: nothing to do - loaded from AWS Secrets Manager
+  #    (first time? see section 1d "STEP-BY-STEP: ADD YOUR OWN GEMINI API KEY")
+  # 4. (Optional) verify cluster access BEFORE starting the agent
+  kubectl --kubeconfig C:\Projects\.kube\dev\config get pods -n apps
+  # 5. Start the agent
+  .\.venv\Scripts\python myagent.py
+
+  On startup the agent prints the current cluster, e.g.
+    Current cluster: arn:aws:eks:us-east-1:<acct>:cluster/demo-dev
+
+  After pulling a new version of myagent.py, exit and start the agent
+  again - a running agent does not pick up code changes.
+
+  ------------------------------------------------------------------
+  COMMANDS INSIDE THE AGENT (handled directly - no AI, no Gemini quota)
+  ------------------------------------------------------------------
+  help / ? / commands
+      -> show example queries
+  list all clusters / list all cluster / show me all clusters / clusters /
+  show clusters / list eks clusters / get all eks clusters /
+  switch cluster / change cluster
+      -> numbered list of all EKS clusters ("<- current" marks the active
+         one). Type a number to switch, or press Enter to cancel.
+  switch to <name> / switch cluster to <name> / change cluster to <name> /
+  use cluster <name> / connect to <name>
+      -> switch straight to that cluster, e.g. "switch to demo-qa"
+  current cluster / which cluster / what is the current cluster /
+  which cluster am i on
+      -> show the cluster you are connected to
+  sync clusters / load all missing clusters
+      -> add every EKS cluster missing from your kubeconfig
+         (backup saved first as <kubeconfig>.bak; existing entries untouched)
+  exit / quit
+      -> leave the agent
+  (empty Enter is ignored)
+
+  Everything else (e.g. "list pods in the cluster", "show nodes") goes to
+  the AI agent, which runs kubectl on the CURRENT cluster.
+
+  ------------------------------------------------------------------
+  SWITCHING CLUSTERS IN THE MIDDLE OF A SESSION
+  ------------------------------------------------------------------
+  Example:
+    What should I do?: list all clusters
+      1. demo-cp  (us-east-1)
+      ...
+      11. demo-dev  (us-east-1)  <- current
+      ...
+    Pick a cluster number (Enter to cancel): 13
+    Switched to demo-qa (us-east-1).
+    What should I do?: get pods in default       <- runs on demo-qa
+    What should I do?: switch to demo-dev          <- back to dev
+  - No restart needed; all following questions use the new cluster.
+  - Clusters not yet in the kubeconfig are added automatically on switch.
+  - Clusters with "prod" in the name ask for an extra y/N confirmation.
+  - The AI itself can NOT switch clusters - only these typed commands.
+  - Switching changes the kubeconfig "current context", so other terminals
+    using the same kubeconfig file will also point to the new cluster.
+  - Default namespace stays "apps"; name the namespace if it doesn't exist
+    in the new cluster (e.g. "get pods in default").
+
+  Cluster switching needs: AWS CLI v2 on PATH, eks:ListClusters and
+  eks:DescribeCluster on the my-aws-profile profile, and RBAC access in the target
+  cluster (being listed does NOT mean you have access inside it).
+  Optional overrides:
+    $env:AWS_EKS_PROFILE = "my-aws-profile"                    (AWS CLI profile)
+    $env:AWS_EKS_REGIONS = "us-east-1,us-west-2"    (default us-east-1)
+
+
+5. SAMPLE QA QUERIES
+--------------------
+  STEP 1 - PICK YOUR CLUSTER FIRST (no AI, no quota)
+    current cluster                -> where am I connected?
+    list all clusters              -> numbered list of all EKS clusters
+    Pick a cluster number (Enter to cancel): 11     -> e.g. demo-dev
+      or switch directly by name:
+    switch to demo-dev
+    switch to demo-qa
+    current cluster                -> confirm the switch
+
+  STEP 2 - ASK QUESTIONS (runs on the CURRENT cluster)
+  Default namespace is apps; add "in <namespace>" or "in all namespaces".
+
+  CLUSTER OVERVIEW (read-only)
+    list all namespaces
+    list all nodes
+    list nodes with extra details
+    describe node <node-name>
+    list all resource types supported by the cluster
+    show everything in obs namespace
+
+  WORKLOADS (read-only)
+    get deployments
+    get deployments in all namespaces
+    get deployment orders-api in yaml format
+    describe deployment orders-api
+    list statefulsets in all namespaces
+    list daemonsets in kube-system
+    list replicasets in apps
+    list jobs and cronjobs in all namespaces
+
+  PODS (read-only)
+    get all pods in obs
+    list pods in apps with extra details (IP, node)
+    list pods with label app=orders-api
+    list pods that are not Running in all namespaces
+    list pods sorted by creation time
+    list pods with their labels
+    describe pod <pod-name>
+
+  LOGS (read-only)
+    get last 50 lines of logs for pod <pod-name>
+    get logs for pod <pod-name> since 10m
+    get logs for pod <pod-name> with timestamps
+    get previous logs for pod <pod-name>        (crashed container)
+    get logs for pod <pod-name> container <container-name>
+    get logs for pods with label app=metrics-api
+
+  NETWORKING (read-only)
+    list services in apps
+    list services in all namespaces with extra details
+    describe service orders-api
+    list endpoints in apps
+    list ingresses in all namespaces
+
+  CONFIG & STORAGE (read-only)
+    list configmaps in apps
+    list persistent volume claims in all namespaces
+    list persistent volumes
+    list storage classes
+    (avoid printing Secret contents - see Safety Notes)
+
+  SECURITY / RBAC (read-only)
+    list service accounts in apps
+    list roles and rolebindings in apps
+    list cluster roles
+
+  MONITORING & TROUBLESHOOTING (read-only)
+    show CPU and memory usage of pods
+    show CPU and memory usage of pods in all namespaces sorted by memory
+    show CPU and memory usage of nodes
+    show recent events in apps
+    show warning events in all namespaces
+    why is pod <pod-name> restarting?
+    which pods have the most restarts in apps?
+
+  WRITE ACTIONS (always ask "Proceed? (y/N)" - only if you have permission)
+    dry run create a deployment named qa-test with image nginx and print yaml
+                                                   (dry run = no change, no prompt)
+    create a deployment named qa-test with image nginx in apps
+    scale deployment qa-test to 2 replicas
+    expose deployment qa-test as ClusterIP on port 80
+    delete service qa-test
+    delete deployment qa-test
+    Always clean up what you create, and check "current cluster" first.
+
+  STEP 3 - MOVE TO ANOTHER CLUSTER AND REPEAT
+    switch to demo-qa
+    get pods in all namespaces
+    switch to demo-dev                -> back to dev
+
+
+6. SAFETY NOTES
+---------------
+  - create / scale / delete / expose ALWAYS ask "Proceed? (y/N)" and print
+    the exact kubectl command first. Read it before typing y.
+  - Default is N - just press Enter to cancel.
+  - These are SHARED clusters. Do not scale/delete other teams' workloads.
+  - Always check "current cluster" before any write action.
+  - Prefer read-only RBAC for QA unless write testing is explicitly required.
+  - "-w/--watch" and "-f/--follow" are stripped automatically (they would hang).
+  - DATA PRIVACY: your question and the kubectl output (pod names, logs,
+    events, YAML) are sent to Google Gemini. On the free tier Google may use
+    it to improve its products. Do NOT request Secret contents or logs that
+    may contain passwords, tokens, or customer data.
+  - AI answers can be wrong - check the "Observation:" (raw kubectl output).
+
+
+7. TROUBLESHOOTING
+------------------
+  "error: You must be logged in to the server (Unauthorized)"
+     -> AWS SAML session expired or KUBECONFIG not set in this window.
+        Re-login and re-run: $env:KUBECONFIG = "C:\Projects\.kube\dev\config"
+
+  "Forbidden ... cannot list resource ..."
+     -> Your IAM role lacks RBAC permission for that resource/namespace.
+        Request access from DevOps.
+
+  "401 UNAUTHENTICATED ... API key not valid" (e.g. ACCESS_TOKEN_TYPE_UNSUPPORTED)
+     -> The stored key is wrong (copied something else / partial / extra text).
+        Replace it with the command in section 1d "CHANGE / REPLACE YOUR KEY LATER".
+        Also check $env:GOOGLE_API_KEY is not set to an old key in this window.
+
+  "ResourceNotFoundException ... can't find the specified secret"
+     -> Run the agent normally; it will prompt to create your secret.
+
+  "KeyboardInterrupt" at the hidden key prompt
+     -> Ctrl+C was pressed. Paste with Ctrl+V or right-click instead.
+
+  "AccessDeniedException" on secretsmanager
+     -> Your AWS role lacks Secrets Manager permissions. Ask the AWS admin.
+
+  "NoCredentialsError" / "ExpiredToken" / "Unable to locate credentials"
+     -> AWS my-aws-profile session expired. Log in again via SAML/SSO.
+
+  "429 You exceeded your current quota"
+     -> Gemini free-tier daily limit reached. Wait for reset or use another key/model.
+
+  "404 models/... is not found"
+     -> Model name retired. Update model= in myagent.py to a currently available model.
+
+  "ModuleNotFoundError: No module named ..." (langchain_classic, boto3, ...)
+     -> .\.venv\Scripts\python -m pip install -r req.txt
+
+  "error: Metrics API not available"
+     -> metrics-server not reachable; top pods/nodes will not work.
+
+  "list all clusters" shows NODES / goes into "Entering new AgentExecutor chain"
+     -> You are running an old copy of the agent. Type exit and start it again.
+
+  "Cluster '<name>' not found"
+     -> Name is misspelled. Type "list all clusters" and pick by number.
+
+  "No EKS clusters found"
+     -> Wrong AWS profile/region. Set $env:AWS_EKS_PROFILE / $env:AWS_EKS_REGIONS.
+
+  "Failed to add cluster" / "AWS CLI not found on PATH"
+     -> Install AWS CLI v2 and check: aws --version
+
+  Messed up kubeconfig after "sync clusters"?
+     -> Restore the backup:
+        Copy-Item C:\Projects\.kube\dev\config.bak C:\Projects\.kube\dev\config
+
+  "Invalid Format: Missing 'Action:' after 'Thought:'"
+     -> AI formatting hiccup; the agent retries automatically. Rephrase if repeated.
+
+  LangChainDeprecationWarning / "temperature will be ignored" warnings
+     -> Harmless, can be ignored.
